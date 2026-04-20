@@ -547,16 +547,7 @@ function mergeOwnersByName(owners){
     if(Array.isArray(owner.hisseler)&&owner.hisseler.length)cur.hisseler.push(...owner.hisseler);
     else if(owner.hisse)cur.hisseler.push({hisse:owner.hisse,yuzde:parseLocaleNumber(owner.yuzde||owner.yuzde_toplam),m2:parseLocaleNumber(owner.m2||owner.m2_toplam)});
   });
-  return Object.values(byKey).map(owner=>{
-    const seenShares=new Set();
-    const hisseler=(Array.isArray(owner.hisseler)?owner.hisseler:[]).filter(h=>{
-      const k=[String((h&&h.hisse)||''),parseLocaleNumber(h&&h.pay),parseLocaleNumber(h&&h.payda),parseLocaleNumber(h&&h.m2),parseLocaleNumber(h&&h.yuzde)].join('|');
-      if(seenShares.has(k))return false;
-      seenShares.add(k);
-      return true;
-    });
-    return {...owner,sn:(owner.sn_list&&owner.sn_list[0])||owner.sn,hisseler};
-  });
+  return Object.values(byKey).map(owner=>({...owner,sn:(owner.sn_list&&owner.sn_list[0])||owner.sn,hisseler:Array.isArray(owner.hisseler)?owner.hisseler:[]}));
 }
 function rx(text){for(let i=1;i<arguments.length;i++){const m=text.match(arguments[i]);if(m)return cl(m[1]||'');}return '';}
 function normalizePercentValues(values,target){
@@ -597,15 +588,18 @@ function normalizeOwners(owners,totalM2){
       ham_yuzde:parseLocaleNumber(share.yuzde||0),
       ham_m2:parseLocaleNumber(share.m2||0),
       yuzde:normalizedShares[shareIndex],
-      m2:safeTotalM2>0?+((safeTotalM2*normalizedShares[shareIndex])/100).toFixed(4):parseLocaleNumber(share.m2||0),
+      norm_m2:safeTotalM2>0?+((safeTotalM2*normalizedShares[shareIndex])/100).toFixed(4):parseLocaleNumber(share.m2||0),
+      m2:parseLocaleNumber(share.m2||0),
     }));
     const ownerM2=normalizedHisseler.reduce((sum,share)=>sum+parseLocaleNumber(share.m2),0);
+    const ownerNormM2=normalizedHisseler.reduce((sum,share)=>sum+parseLocaleNumber(share.norm_m2),0);
     return {
       ...owner,
       ham_yuzde_toplam:parseLocaleNumber(owner.yuzde_toplam||owner.yuzde||0),
       ham_m2_toplam:parseLocaleNumber(owner.m2_toplam||owner.m2||0),
       yuzde_toplam:normalizedOwnerTotals[index],
       m2_toplam:+ownerM2.toFixed(4),
+      norm_m2_toplam:+ownerNormM2.toFixed(4),
       hisseler:normalizedHisseler,
     };
   });
@@ -671,7 +665,7 @@ function parseOwners(text,totalM2){
     if(m2v<=0)continue;
     if(m2v>tot*1.01)m2v=m2FromHisse;
     if(Math.abs(m2v-m2FromHisse)>Math.max(0.5,tot*0.01))m2v=m2FromHisse;
-    const key=sn+'|'+fm[1]+'/'+fm[2];
+    const key=sn+'|'+fm[1]+'/'+fm[2]+'|'+m2v.toFixed(4);
     if(seen.has(key))continue;seen.add(key);
     const yuzde=tot>0?(m2v/tot*100):pctFromHisse;
     entries.push({sn,ad:name,hisse:fm[1]+'/'+fm[2],m2:+m2v.toFixed(4),tot,yuzde:+yuzde.toFixed(5),pay,payda});
@@ -755,22 +749,22 @@ function computeStats(data){
   s.topOwners=Object.values(ownerMap).filter(v=>v.count>=2).sort((a,b)=>b.count-a.count).slice(0,30).map(v=>({...v,pct:+(v.count/s.toplam*100).toFixed(1)}));
   const ownerPortfolio={};
   data.forEach(d=>{
-    const pArea=s.toplam_alan>0?(d.yuzolcum_sayi/s.toplam_alan*100):0;
     d.malikler.forEach(m=>{
       const key=ownerNameKey(m&&m.ad);if(!key)return;
       const display=String((m&&m.ad)||'').trim();
-      if(!ownerPortfolio[key])ownerPortfolio[key]={name:display,count:0,portfoyPct:0,m2:0,rawAvg:0,rawSum:0};
+      if(!ownerPortfolio[key])ownerPortfolio[key]={name:display,count:0,portfoyPct:0,m2:0,normM2:0,rawAvg:0,rawSum:0};
       if(display.length>String(ownerPortfolio[key].name||'').length)ownerPortfolio[key].name=display;
       ownerPortfolio[key].count++;
       ownerPortfolio[key].m2+=(Number(m.m2_toplam)||0);
-      ownerPortfolio[key].portfoyPct+=pArea*(Number(m.yuzde_toplam)||0)/100;
+      ownerPortfolio[key].normM2+=(Number(m.norm_m2_toplam)||0);
       ownerPortfolio[key].rawSum+=(Number(m.ham_yuzde_toplam)||Number(m.yuzde_toplam)||0);
     });
   });
   s.ownerPortfolio=Object.values(ownerPortfolio).map(o=>({
     ...o,
     m2:+o.m2.toFixed(2),
-    portfoyPct:+o.portfoyPct.toFixed(4),
+    normM2:+o.normM2.toFixed(2),
+    portfoyPct:s.toplam_alan>0?+((o.m2/s.toplam_alan)*100).toFixed(4):0,
     rawAvg:o.count>0?+(o.rawSum/o.count).toFixed(4):0,
   })).sort((a,b)=>b.portfoyPct-a.portfoyPct).slice(0,40);
   s.byArea=[...data].sort((a,b)=>b.yuzolcum_sayi-a.yuzolcum_sayi);
@@ -1116,10 +1110,10 @@ function openModal(idx){
     const cColors=allOwners.map((_,i)=>PAL[i%PAL.length]);
     const rows=allOwners.map(m=>{
       const hs=m.hisseler
-        ?m.hisseler.map(h=>'<span style="font-family:monospace;font-size:.8em">'+esc(h.hisse)+'</span> <span style="color:var(--p2)">%'+Number(h.yuzde||0).toFixed(4)+'</span> <span style="color:var(--muted)">'+Number(h.m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</span>').join('<br>')
+        ?m.hisseler.map(h=>'<span style="font-family:monospace;font-size:.8em">'+esc(h.hisse)+'</span> <span style="color:var(--p2)">%'+Number(h.yuzde||0).toFixed(4)+'</span> <span style="color:var(--muted)">Ham: '+Number(h.m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2 | Norm: '+Number(h.norm_m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</span>').join('<br>')
         :esc(m.hisse);
       return '<tr><td title="'+esc(m.ad)+'">'+esc(m.ad||'--')+'</td>'
-        +'<td style="font-size:.72rem;line-height:1.6">'+hs+'<div style="margin-top:4px;color:var(--muted)">Toplam: '+Number(m.m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2 | Ham: '+Number(m.ham_m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</div></td>'
+        +'<td style="font-size:.72rem;line-height:1.6">'+hs+'<div style="margin-top:4px;color:var(--muted)">Ham Toplam: '+Number(m.m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2 | Norm Toplam: '+Number(m.norm_m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</div></td>'
         +'<td><strong style="color:var(--p2)">%'+(m.yuzde_toplam||0).toFixed(4)+'</strong>'
         +'<div class="pct-bar-mini"><div class="pct-bar-fill" style="width:'+Math.min(m.yuzde_toplam||0,100)+'%"></div></div></td></tr>';
     }).join('');

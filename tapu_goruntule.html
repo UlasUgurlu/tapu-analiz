@@ -28,6 +28,13 @@ nav{background:var(--p);color:#fff;height:54px;display:flex;align-items:center;j
 .drop-btn:hover{background:#1d4ed8}
 #fileInput{display:none}
 #progressScreen{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 54px)}
+#toastContainer{position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:11px 18px;border-radius:10px;color:#fff;font-size:.87rem;font-weight:500;box-shadow:0 4px 18px rgba(0,0,0,.18);opacity:0;transform:translateY(12px);transition:opacity .3s,transform .3s;pointer-events:none;max-width:320px}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.toast-ok{background:#16a34a}
+.toast.toast-info{background:#2563eb}
+.toast.toast-warn{background:#d97706}
+.toast.toast-err{background:#dc2626}
 .prog-card{background:#fff;border-radius:16px;padding:36px 48px;text-align:center;max-width:460px;width:100%;box-shadow:var(--sh)}
 .prog-title{font-size:1.05rem;font-weight:700;margin-bottom:6px;color:var(--p)}
 .prog-file{font-size:.8rem;color:var(--muted);margin-bottom:18px;min-height:18px;word-break:break-all}
@@ -329,7 +336,29 @@ function openFilePicker(){fileInput.click();}
 function openJsonPicker(){jsonInput.click();}
 function destroyCharts(){Object.values(charts).forEach(c=>{try{c.destroy();}catch(e){}});charts={};}
 function resetApp(){ALL_DATA=[];STATS={};ALL_BEYANS=[];destroyCharts();fileInput.value='';document.getElementById('dropScreen').style.display='flex';document.getElementById('progressScreen').style.display='none';document.getElementById('app').style.display='none';document.getElementById('reloadBtn').style.display='none';document.getElementById('clearBtn').style.display='none';document.getElementById('jsonExportBtn').style.display='none';document.getElementById('jsonImportBtn').style.display='none';document.getElementById('exportBtn').style.display='none';}
-function saveStoredData(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify({savedAt:new Date().toISOString(),data:ALL_DATA}));}catch(e){console.warn('Cache save failed',e);}}
+function showToast(msg,type='ok',dur=3200){
+  let c=document.getElementById('toastContainer');
+  if(!c){c=document.createElement('div');c.id='toastContainer';document.body.appendChild(c);}
+  const t=document.createElement('div');
+  t.className='toast toast-'+type;
+  t.textContent=msg;
+  c.appendChild(t);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>t.classList.add('show')));
+  setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),350);},dur);
+}
+function saveStoredData(){
+  try{
+    localStorage.setItem(STORAGE_KEY,JSON.stringify({savedAt:new Date().toISOString(),data:ALL_DATA}));
+    showToast('✓ '+ALL_DATA.length+' taşınmaz hafızaya kaydedildi','ok');
+  }catch(e){
+    if(e.name==='QuotaExceededError'||e.code===22){
+      showToast('⚠ Hafıza dolu! JSON Dışa Aktar ile yedekle.','warn',5000);
+    }else{
+      showToast('⚠ Hafızaya kaydedilemedi: '+e.message,'err',5000);
+    }
+    console.warn('Cache save failed',e);
+  }
+}
 function restoreStoredData(){
   try{
     const raw=localStorage.getItem(STORAGE_KEY);
@@ -348,6 +377,8 @@ function restoreStoredData(){
     document.getElementById('jsonImportBtn').style.display='inline-block';
     document.getElementById('exportBtn').style.display='inline-block';
     renderApp();
+    const s=parsed.savedAt?new Date(parsed.savedAt).toLocaleString('tr-TR',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+    showToast('📂 '+ALL_DATA.length+' taşınmaz hafızadan yüklendi'+(s?' ('+s+')':''),'info',4000);
   }catch(e){console.warn('Cache restore failed',e);localStorage.removeItem(STORAGE_KEY);}
 }
 function clearStoredData(){localStorage.removeItem(STORAGE_KEY);resetApp();}

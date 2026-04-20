@@ -1028,13 +1028,15 @@ function openModal(idx){
   const pct=STATS.toplam_alan>0?(d.yuzolcum_sayi/STATS.toplam_alan*100).toFixed(2):'0';
   let ownHTML='';
   if(d.malikler.length>0){
-    const top=d.malikler.slice(0,15),oth=d.malikler.slice(15);
-    const othY=oth.reduce((s,m)=>s+(m.yuzde_toplam||0),0);
-    const cLbls=[...top.map(m=>m.ad.substring(0,22)),...(oth.length?['Diger ('+oth.length+')']:[])];
-    const cData=[...top.map(m=>+(m.yuzde_toplam||0).toFixed(4)),...(oth.length?[+othY.toFixed(4)]:[])];
-    const rows=top.map(m=>{
-      const hs=m.hisseler?m.hisseler.map(h=>'<span style="font-family:monospace;font-size:.8em">'+esc(h.hisse)+'</span> <span style="color:var(--p2)">%'+h.yuzde.toFixed(4)+'</span> <span style="color:var(--muted)">'+h.m2.toLocaleString('tr-TR',{maximumFractionDigits:2})+'m2</span>').join('<br>'):esc(m.hisse);
-      return '<tr><td title="'+esc(m.ad)+'">'+esc(m.ad.length>28?m.ad.substring(0,26)+'..':m.ad)+'</td>'
+    const allOwners=d.malikler;
+    const cLbls=allOwners.map(m=>String((m.ad||'')).substring(0,26));
+    const cData=allOwners.map(m=>+(m.yuzde_toplam||0).toFixed(4));
+    const cColors=allOwners.map((_,i)=>PAL[i%PAL.length]);
+    const rows=allOwners.map(m=>{
+      const hs=m.hisseler
+        ?m.hisseler.map(h=>'<span style="font-family:monospace;font-size:.8em">'+esc(h.hisse)+'</span> <span style="color:var(--p2)">%'+Number(h.yuzde||0).toFixed(4)+'</span> <span style="color:var(--muted)">'+Number(h.m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</span>').join('<br>')
+        :esc(m.hisse);
+      return '<tr><td title="'+esc(m.ad)+'">'+esc(m.ad||'--')+'</td>'
         +'<td style="font-size:.72rem;line-height:1.6">'+hs+'</td>'
         +'<td><strong style="color:var(--p2)">%'+(m.yuzde_toplam||0).toFixed(4)+'</strong>'
         +'<div class="pct-bar-mini"><div class="pct-bar-fill" style="width:'+Math.min(m.yuzde_toplam||0,100)+'%"></div></div></td></tr>';
@@ -1043,7 +1045,7 @@ function openModal(idx){
     const covClass='';
     ownHTML='<div class="own-wrap"><div><div class="own-chart-wrap"><canvas id="ownChart"></canvas></div></div>'
       +'<div><table class="own-table"><thead><tr><th>Malik Adi</th><th>Hisse &amp; m2</th><th>%</th></tr></thead>'
-      +'<tbody>'+rows+(oth.length?'<tr><td colspan="2" style="color:var(--muted);font-size:.73rem">+ '+oth.length+' diger malik</td><td><strong>%'+othY.toFixed(4)+'</strong></td></tr>':'')+'</tbody></table></div></div>';
+      +'<tbody>'+rows+'</tbody></table></div></div>';
     ownHTML+='<div class="own-summary">'
       +'<div class="os-item"><div class="k">Tespit edilen malik</div><div class="v">'+d.malik_sayisi+'</div></div>'
       +'<div class="os-item"><div class="k">Normalize toplam pay</div><div class="v" style="color:var(--g)">%'+d.hisse_toplam.toFixed(4)+'</div></div>'
@@ -1056,7 +1058,7 @@ function openModal(idx){
     setTimeout(()=>{
       if(modalChart)try{modalChart.destroy();}catch(e){}
       const ctx=document.getElementById('ownChart');
-      if(ctx)modalChart=new Chart(ctx,{type:'pie',data:{labels:cLbls,datasets:[{data:cData,backgroundColor:PAL.slice(0,cLbls.length),borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:9},boxWidth:10}}}}});
+      if(ctx)modalChart=new Chart(ctx,{type:'pie',data:{labels:cLbls,datasets:[{data:cData,backgroundColor:cColors,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:9},boxWidth:10}}}}});
     },60);
   }else ownHTML='<p style="color:var(--muted);font-size:.85rem">Malik bilgisi cikarilamadi. PDF yapisina gore manuel inceleme gerekebilir.</p>';
   const sHTML=d.serhler.length>0

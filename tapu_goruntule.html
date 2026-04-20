@@ -516,6 +516,48 @@ function parseLocaleNumber(v){
   const n=Number(s);
   return Number.isFinite(n)?n:0;
 }
+function ownerNameKey(name){
+  const raw=String(name||'').trim();
+  if(!raw)return '';
+  return raw
+    .toLocaleUpperCase('tr-TR')
+    .replace(/[^0-9A-ZÇĞİÖŞÜ ]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+function mergeOwnersByName(owners){
+  const byKey={};
+  (Array.isArray(owners)?owners:[]).forEach(owner=>{
+    if(!owner)return;
+    const key=ownerNameKey(owner.ad)||('SN:'+String(owner.sn||''));
+    if(!byKey[key]){
+      byKey[key]={
+        ...owner,
+        ad:String(owner.ad||'').trim(),
+        hisseler:Array.isArray(owner.hisseler)?owner.hisseler.slice():[],
+        sn_list:owner.sn?[owner.sn]:[],
+      };
+      return;
+    }
+    const cur=byKey[key];
+    if(String(owner.ad||'').trim().length>String(cur.ad||'').length)cur.ad=String(owner.ad||'').trim();
+    cur.yuzde_toplam=+((parseLocaleNumber(cur.yuzde_toplam)+parseLocaleNumber(owner.yuzde_toplam||owner.yuzde)).toFixed(5));
+    cur.m2_toplam=+((parseLocaleNumber(cur.m2_toplam||cur.m2)+parseLocaleNumber(owner.m2_toplam||owner.m2)).toFixed(4));
+    if(owner.sn&&!cur.sn_list.includes(owner.sn))cur.sn_list.push(owner.sn);
+    if(Array.isArray(owner.hisseler)&&owner.hisseler.length)cur.hisseler.push(...owner.hisseler);
+    else if(owner.hisse)cur.hisseler.push({hisse:owner.hisse,yuzde:parseLocaleNumber(owner.yuzde||owner.yuzde_toplam),m2:parseLocaleNumber(owner.m2||owner.m2_toplam)});
+  });
+  return Object.values(byKey).map(owner=>{
+    const seenShares=new Set();
+    const hisseler=(Array.isArray(owner.hisseler)?owner.hisseler:[]).filter(h=>{
+      const k=[String((h&&h.hisse)||''),parseLocaleNumber(h&&h.pay),parseLocaleNumber(h&&h.payda),parseLocaleNumber(h&&h.m2),parseLocaleNumber(h&&h.yuzde)].join('|');
+      if(seenShares.has(k))return false;
+      seenShares.add(k);
+      return true;
+    });
+    return {...owner,sn:(owner.sn_list&&owner.sn_list[0])||owner.sn,hisseler};
+  });
+}
 function rx(text){for(let i=1;i<arguments.length;i++){const m=text.match(arguments[i]);if(m)return cl(m[1]||'');}return '';}
 function normalizePercentValues(values,target){
   if(!values.length)return [];
@@ -533,9 +575,10 @@ function normalizePercentValues(values,target){
   });
 }
 function normalizeOwners(owners,totalM2){
-  if(!Array.isArray(owners)||!owners.length)return {owners:[],hamToplam:0,hisseToplam:0};
+  const mergedOwners=mergeOwnersByName(Array.isArray(owners)?owners:[]);
+  if(!mergedOwners.length)return {owners:[],hamToplam:0,hisseToplam:0};
   const safeTotalM2=parseLocaleNumber(totalM2);
-  const rawOwnerTotals=owners.map(owner=>{
+  const rawOwnerTotals=mergedOwners.map(owner=>{
     if(owner&&owner.yuzde_toplam!==undefined)return parseLocaleNumber(owner.yuzde_toplam);
     if(owner&&owner.yuzde!==undefined)return parseLocaleNumber(owner.yuzde);
     if(Array.isArray(owner&&owner.hisseler))return owner.hisseler.reduce((sum,share)=>sum+parseLocaleNumber(share.yuzde),0);
@@ -543,7 +586,7 @@ function normalizeOwners(owners,totalM2){
   });
   const hamToplam=+rawOwnerTotals.reduce((sum,value)=>sum+value,0).toFixed(5);
   const normalizedOwnerTotals=normalizePercentValues(rawOwnerTotals,100);
-  const normalizedOwners=owners.map((owner,index)=>{
+  const normalizedOwners=mergedOwners.map((owner,index)=>{
     const hisseler=Array.isArray(owner.hisseler)&&owner.hisseler.length
       ?owner.hisseler
       :[{hisse:owner.hisse,yuzde:parseLocaleNumber(owner.yuzde_toplam||owner.yuzde||0),m2:parseLocaleNumber(owner.m2_toplam||owner.m2||0)}];
@@ -690,7 +733,7 @@ function computeStats(data){
   const s={};s.toplam=data.length;s.toplam_alan=data.reduce((a,d)=>a+d.yuzolcum_sayi,0);
   s.toplam_malik_kaydi=data.reduce((a,d)=>a+(d.malik_sayisi||0),0);
   const uniqueOwners=new Set();
-  data.forEach(d=>d.malikler.forEach(m=>{if(m.ad)uniqueOwners.add(m.ad.trim());}));
+  data.forEach(d=>d.malikler.forEach(m=>{const k=ownerNameKey(m&&m.ad);if(k)uniqueOwners.add(k);}));
   s.tekil_malik=uniqueOwners.size;
   const byN={};data.forEach(d=>{const k=d.nitelik_norm||'Diger';if(!byN[k])byN[k]={adet:0,alan:0};byN[k].adet++;byN[k].alan+=d.yuzolcum_sayi;});
   Object.values(byN).forEach(v=>{v.adet_pct=s.toplam>0?+(v.adet/s.toplam*100).toFixed(1):0;v.alan_pct=s.toplam_alan>0?+(v.alan/s.toplam_alan*100).toFixed(1):0;});
@@ -701,18 +744,27 @@ function computeStats(data){
   s.imar_sayisi=data.filter(d=>d.imar_aykiri).length;s.temiz_sayisi=data.filter(d=>!d.izale_var&&!d.haciz_var&&!d.imar_aykiri).length;
   s.izale_pct=+(s.izale_sayisi/s.toplam*100).toFixed(1);s.haciz_pct=+(s.haciz_sayisi/s.toplam*100).toFixed(1);
   s.imar_pct=+(s.imar_sayisi/s.toplam*100).toFixed(1);s.temiz_pct=+(s.temiz_sayisi/s.toplam*100).toFixed(1);
-  const ownerMap={};data.forEach(d=>d.malikler.forEach(m=>{const n=m.ad.trim();if(!ownerMap[n])ownerMap[n]={count:0,files:[]};ownerMap[n].count++;ownerMap[n].files.push(d.dosya.replace('.pdf','').substring(0,40));}));
-  s.topOwners=Object.entries(ownerMap).filter(([,v])=>v.count>=2).sort((a,b)=>b[1].count-a[1].count).slice(0,30).map(([name,v])=>({name,...v,pct:+(v.count/s.toplam*100).toFixed(1)}));
+  const ownerMap={};data.forEach(d=>d.malikler.forEach(m=>{
+    const key=ownerNameKey(m&&m.ad);if(!key)return;
+    const display=String((m&&m.ad)||'').trim();
+    if(!ownerMap[key])ownerMap[key]={name:display,count:0,files:[]};
+    if(display.length>String(ownerMap[key].name||'').length)ownerMap[key].name=display;
+    ownerMap[key].count++;
+    ownerMap[key].files.push(d.dosya.replace('.pdf','').substring(0,40));
+  }));
+  s.topOwners=Object.values(ownerMap).filter(v=>v.count>=2).sort((a,b)=>b.count-a.count).slice(0,30).map(v=>({...v,pct:+(v.count/s.toplam*100).toFixed(1)}));
   const ownerPortfolio={};
   data.forEach(d=>{
     const pArea=s.toplam_alan>0?(d.yuzolcum_sayi/s.toplam_alan*100):0;
     d.malikler.forEach(m=>{
-      const n=(m.ad||'').trim();if(!n)return;
-      if(!ownerPortfolio[n])ownerPortfolio[n]={name:n,count:0,portfoyPct:0,m2:0,rawAvg:0,rawSum:0};
-      ownerPortfolio[n].count++;
-      ownerPortfolio[n].m2+=(Number(m.m2_toplam)||0);
-      ownerPortfolio[n].portfoyPct+=pArea*(Number(m.yuzde_toplam)||0)/100;
-      ownerPortfolio[n].rawSum+=(Number(m.ham_yuzde_toplam)||Number(m.yuzde_toplam)||0);
+      const key=ownerNameKey(m&&m.ad);if(!key)return;
+      const display=String((m&&m.ad)||'').trim();
+      if(!ownerPortfolio[key])ownerPortfolio[key]={name:display,count:0,portfoyPct:0,m2:0,rawAvg:0,rawSum:0};
+      if(display.length>String(ownerPortfolio[key].name||'').length)ownerPortfolio[key].name=display;
+      ownerPortfolio[key].count++;
+      ownerPortfolio[key].m2+=(Number(m.m2_toplam)||0);
+      ownerPortfolio[key].portfoyPct+=pArea*(Number(m.yuzde_toplam)||0)/100;
+      ownerPortfolio[key].rawSum+=(Number(m.ham_yuzde_toplam)||Number(m.yuzde_toplam)||0);
     });
   });
   s.ownerPortfolio=Object.values(ownerPortfolio).map(o=>({

@@ -638,37 +638,54 @@ function parseTapu(rawText,filename,fileMeta){
   d.imar_aykiri =/[I\u0130]mar\s*Mevzuat[i\u0131]na\s*Ayk[i\u0131]r[i\u0131]/i.test(text);
   return hydrateTapuRecord(d);
 }
-function parseOwners(text,totalM2){
-  const entries=[],seen=new Set();
-  const snRe=/\(SN[G]?:(\d{7,12})\)\s+([^\n\r:]{2,80}?)\s*:/g;
+function parseOwnerSharesFromBlock(block,totalM2){
+  const shares=[];
   const safeTotalM2=parseLocaleNumber(totalM2);
+  const shareRe=/(\d{1,12})\/(\d{1,12})\s+([\d.,]+)\s+([\d.,]+)/g;
+  let match;
+  while((match=shareRe.exec(block))!==null){
+    const pay=parseInt(match[1],10);
+    const payda=parseInt(match[2],10);
+    if(!pay||!payda||pay>payda)continue;
+    const m2Parsed=parseLocaleNumber(match[3]);
+    const totParsed=parseLocaleNumber(match[4]);
+    const tot=safeTotalM2>0?safeTotalM2:(totParsed||0);
+    if(tot<=0)continue;
+    const m2FromHisse=tot*(pay/payda);
+    let m2v=m2Parsed>0?m2Parsed:m2FromHisse;
+    if(m2v>tot*1.01)m2v=m2FromHisse;
+    if(Math.abs(m2v-m2FromHisse)>Math.max(0.5,tot*0.01))m2v=m2FromHisse;
+    if(m2v<=0)continue;
+    const yuzde=tot>0?(m2v/tot*100):((pay/payda)*100);
+    shares.push({
+      hisse:match[1]+'/'+match[2],
+      m2:+m2v.toFixed(4),
+      tot,
+      yuzde:+yuzde.toFixed(5),
+      pay,
+      payda,
+    });
+  }
+  return shares;
+}
+function parseOwners(text,totalM2){
+  const entries=[];
+  const snRe=/\(SN[G]?:(\d{7,12})\)\s+([^\n\r:]{2,80}?)\s*:/g;
+  const matches=[...text.matchAll(snRe)];
+  if(!matches.length)return [];
   let m;
-  while((m=snRe.exec(text))!==null){
+  for(let i=0;i<matches.length;i++){
+    m=matches[i];
     const sn=m[1];
     let name=m[2].replace(/\s+/g,' ').trim();
     name=name.split(' ').filter(w=>w.length>1).join(' ').trim();
     if(name.length<2)continue;
-    const fwdStart=m.index+m[0].length;
-    const fwd=text.substring(fwdStart,fwdStart+700);
-    const fm=fwd.match(/(\d{1,12})\/(\d{1,12})\s+([\d.,]+)\s+([\d.,]+)/);
-    if(!fm)continue;
-    const pay=parseInt(fm[1],10),payda=parseInt(fm[2],10);
-    const m2Parsed=parseLocaleNumber(fm[3]);
-    const totParsed=parseLocaleNumber(fm[4]);
-    const tot=safeTotalM2>0?safeTotalM2:(totParsed||1);
-    if(payda===0||pay===0)continue;
-    if(pay>payda)continue;
-    if(tot<10)continue;
-    const pctFromHisse=(pay/payda)*100;
-    const m2FromHisse=tot*(pay/payda);
-    let m2v=m2Parsed>0?m2Parsed:m2FromHisse;
-    if(m2v<=0)continue;
-    if(m2v>tot*1.01)m2v=m2FromHisse;
-    if(Math.abs(m2v-m2FromHisse)>Math.max(0.5,tot*0.01))m2v=m2FromHisse;
-    const key=sn+'|'+fm[1]+'/'+fm[2]+'|'+m2v.toFixed(4);
-    if(seen.has(key))continue;seen.add(key);
-    const yuzde=tot>0?(m2v/tot*100):pctFromHisse;
-    entries.push({sn,ad:name,hisse:fm[1]+'/'+fm[2],m2:+m2v.toFixed(4),tot,yuzde:+yuzde.toFixed(5),pay,payda});
+    const blockStart=m.index+m[0].length;
+    const blockEnd=i+1<matches.length?matches[i+1].index:Math.min(text.length,blockStart+1200);
+    const ownerBlock=text.substring(blockStart,blockEnd);
+    const shares=parseOwnerSharesFromBlock(ownerBlock,totalM2);
+    if(!shares.length)continue;
+    shares.forEach(share=>entries.push({sn,ad:name,...share}));
   }
   const bySN={};
   for(const o of entries){

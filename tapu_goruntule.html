@@ -632,7 +632,28 @@ function parseSerhler(text){
 }
 function collectBeyans(data){
   const all=[];
-  data.forEach((d,idx)=>d.serhler.forEach((s,si)=>all.push({...s,dosya:d.dosya,dosya_no:d.dosya_no||String(idx+1),tasinmaz:d.mahalle||d.mevkii||d.nitelik||d.dosya.replace('.pdf',''),nitelik:d.nitelik_norm||'?',alan:d.yuzolcum_sayi,tasinmazIdx:idx,id:idx+'-'+si})));
+  data.forEach((d,idx)=>{
+    const serhler=Array.isArray(d.serhler)?d.serhler:[];
+    serhler.forEach((s,si)=>{
+      let item=s;
+      if(typeof item==='string')item={tip:'Serh',aciklama:item,tarih:'',yevmiye:''};
+      if(!item||typeof item!=='object')return;
+      all.push({
+        ...item,
+        tip:item.tip||'Serh',
+        aciklama:item.aciklama||'',
+        tarih:item.tarih||'',
+        yevmiye:item.yevmiye||'',
+        dosya:d.dosya,
+        dosya_no:d.dosya_no||String(idx+1),
+        tasinmaz:d.mahalle||d.mevkii||d.nitelik||d.dosya.replace('.pdf',''),
+        nitelik:d.nitelik_norm||'?',
+        alan:Number(d.yuzolcum_sayi)||0,
+        tasinmazIdx:idx,
+        id:idx+'-'+si
+      });
+    });
+  });
   return all;
 }
 function computeStats(data){
@@ -688,7 +709,7 @@ function renderApp(){
   renderStatCards();renderCharts();renderPropCards(ALL_DATA);populateFilters();
   updateArsaRangeBounds();
   filterArsalar();
-  renderBeyans(ALL_BEYANS);populateBeyanFilters();renderAnalysis();
+  populateBeyanFilters();filterBeyans();renderAnalysis();
   const d=new Date().toLocaleString('tr-TR',{day:'2-digit',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
   document.getElementById('footerTxt').textContent='Tapu Analiz | '+d+' | '+ALL_DATA.length+' tasinmaz | '+ALL_BEYANS.length+' beyan/serh';
 }
@@ -957,25 +978,40 @@ function exportArsaCSV(){
 function tcls(tip){return /erh/i.test(tip)?'S':/rtifak/i.test(tip)?'I':/kel/i.test(tip)?'M':'B';}
 function renderBeyans(list){
   const grid=document.getElementById('beyanGrid');
-  document.getElementById('beyanCt').textContent=list.length+' kayit';
-  if(!list.length){grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px;color:#999">Beyan/serh kaydi bulunamadi.</div>';return;}
-  grid.innerHTML=list.map(b=>'<div class="beyan-card tc-'+tcls(b.tip)+'" onclick="openModal('+b.tasinmazIdx+')">'
-    +'<div class="bc-tip">'+esc(b.tip)+'</div>'
-    +'<div class="bc-text">'+esc(b.aciklama)+'</div>'
-    +(b.tarih?'<div class="bc-date">&#128197; '+esc(b.tarih)+(b.yevmiye?' &nbsp;|&nbsp; Yevmiye: '+esc(b.yevmiye):'')+' </div>':'')
-    +'<div class="bc-source"><span>'+esc(b.tasinmaz)+'</span><span class="bc-badge">'+esc(b.nitelik)+(b.alan>0?' | '+b.alan.toLocaleString('tr-TR')+' m2':'')+'</span></div></div>').join('');
+  const safe=Array.isArray(list)?list:[];
+  document.getElementById('beyanCt').textContent=safe.length+' kayit';
+  if(!safe.length){grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px;color:#999">Beyan/serh kaydi bulunamadi.</div>';return;}
+  grid.innerHTML=safe.map(b=>{
+    const tip=String((b&&b.tip)||'Serh');
+    const aciklama=String((b&&b.aciklama)||'');
+    const tarih=String((b&&b.tarih)||'');
+    const yevmiye=String((b&&b.yevmiye)||'');
+    const tasinmaz=String((b&&b.tasinmaz)||'--');
+    const nitelik=String((b&&b.nitelik)||'?');
+    const alan=Number((b&&b.alan)||0);
+    const idx=Number.isInteger(b&&b.tasinmazIdx)?b.tasinmazIdx:0;
+    return '<div class="beyan-card tc-'+tcls(tip)+'" onclick="openModal('+idx+')">'
+      +'<div class="bc-tip">'+esc(tip)+'</div>'
+      +'<div class="bc-text">'+esc(aciklama)+'</div>'
+      +(tarih?'<div class="bc-date">&#128197; '+esc(tarih)+(yevmiye?' &nbsp;|&nbsp; Yevmiye: '+esc(yevmiye):'')+' </div>':'')
+      +'<div class="bc-source"><span>'+esc(tasinmaz)+'</span><span class="bc-badge">'+esc(nitelik)+(alan>0?' | '+alan.toLocaleString('tr-TR')+' m2':'')+'</span></div></div>';
+  }).join('');
 }
 function populateBeyanFilters(){
-  const ds=[...new Set(ALL_BEYANS.map(b=>b.tasinmaz).filter(Boolean))].sort();
+  const ds=[...new Set(ALL_BEYANS.map(b=>String((b&&b.tasinmaz)||'').trim()).filter(Boolean))].sort();
   document.getElementById('beyanDosya').innerHTML='<option value="">Tum Tasinmazlar</option>'+ds.map(d=>'<option value="'+esc(d)+'">'+esc(d)+'</option>').join('');
 }
 function filterBeyans(){
-  const q=document.getElementById('beyanSrch').value.toLowerCase();
-  const tip=document.getElementById('beyanTip').value,dosya=document.getElementById('beyanDosya').value;
+  const q=String(document.getElementById('beyanSrch').value||'').toLowerCase();
+  const tip=String(document.getElementById('beyanTip').value||'').toLowerCase();
+  const dosya=String(document.getElementById('beyanDosya').value||'');
   const f=ALL_BEYANS.filter(b=>{
-    if(q&&!(b.aciklama.toLowerCase().includes(q)||b.tip.toLowerCase().includes(q)))return false;
-    if(tip&&!b.tip.toLowerCase().includes(tip.toLowerCase()))return false;
-    if(dosya&&b.tasinmaz!==dosya)return false;
+    const aciklama=String((b&&b.aciklama)||'').toLowerCase();
+    const bTip=String((b&&b.tip)||'').toLowerCase();
+    const bDosya=String((b&&b.tasinmaz)||'');
+    if(q&&!(aciklama.includes(q)||bTip.includes(q)))return false;
+    if(tip&&!bTip.includes(tip))return false;
+    if(dosya&&bDosya!==dosya)return false;
     return true;
   });
   renderBeyans(f);
@@ -1128,7 +1164,7 @@ function exportCSV(){
     d.cilt_sayfa||'',d.kayit_dur||''
   ].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';'));
   const beyanHdr=['Tasinmaz No','Tasinmaz','Tip','Aciklama','Tarih','Yevmiye'];
-  const beyanRows=ALL_BEYANS.map(b=>[b.dosya_no||'',b.tasinmaz,b.tip,b.aciklama.substring(0,200),b.tarih,b.yevmiye].map(v=>'"'+String(v||'').replace(/"/g,'""')+'"').join(';'));
+  const beyanRows=ALL_BEYANS.map(b=>[b.dosya_no||'',b.tasinmaz,b.tip,String((b&&b.aciklama)||'').substring(0,200),b.tarih,b.yevmiye].map(v=>'"'+String(v||'').replace(/"/g,'""')+'"').join(';'));
   const csv=BOM+[hdr.join(';'),...rows,'','BEYAN / SERH',beyanHdr.join(';'),...beyanRows].join('\r\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   a.download='tapu_analiz_'+(new Date().toISOString().slice(0,10))+'.csv';a.click();

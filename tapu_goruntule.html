@@ -577,7 +577,7 @@ function normalizeOwners(owners,totalM2){
   });
   const hamToplam=+rawOwnerTotals.reduce((sum,value)=>sum+value,0).toFixed(5);
   const normalizedOwnerTotals=normalizePercentValues(rawOwnerTotals,100);
-  const normalizedOwners=mergedOwners.map((owner,index)=>{
+  const enrichedOwners=mergedOwners.map((owner,index)=>{
     const hisseler=Array.isArray(owner.hisseler)&&owner.hisseler.length
       ?owner.hisseler
       :[{hisse:owner.hisse,yuzde:parseLocaleNumber(owner.yuzde_toplam||owner.yuzde||0),m2:parseLocaleNumber(owner.m2_toplam||owner.m2||0)}];
@@ -587,27 +587,42 @@ function normalizeOwners(owners,totalM2){
       ...share,
       ham_yuzde:parseLocaleNumber(share.yuzde||0),
       ham_m2:parseLocaleNumber(share.m2||0),
-      yuzde:normalizedShares[shareIndex],
+      yuzde:parseLocaleNumber(share.yuzde||0),
+      norm_yuzde:normalizedShares[shareIndex],
       norm_m2:safeTotalM2>0?+((safeTotalM2*normalizedShares[shareIndex])/100).toFixed(4):parseLocaleNumber(share.m2||0),
       m2:parseLocaleNumber(share.m2||0),
     }));
     const ownerM2=normalizedHisseler.reduce((sum,share)=>sum+parseLocaleNumber(share.m2),0);
     const ownerNormM2=normalizedHisseler.reduce((sum,share)=>sum+parseLocaleNumber(share.norm_m2),0);
+    const ownerRawPct=rawOwnerTotals[index];
     return {
       ...owner,
-      ham_yuzde_toplam:parseLocaleNumber(owner.yuzde_toplam||owner.yuzde||0),
+      ham_yuzde_toplam:ownerRawPct,
       ham_m2_toplam:parseLocaleNumber(owner.m2_toplam||owner.m2||0),
-      yuzde_toplam:normalizedOwnerTotals[index],
+      yuzde_toplam:ownerRawPct,
+      norm_yuzde_toplam:normalizedOwnerTotals[index],
       m2_toplam:+ownerM2.toFixed(4),
       norm_m2_toplam:+ownerNormM2.toFixed(4),
       hisseler:normalizedHisseler,
     };
   });
-  return {owners:normalizedOwners.sort((a,b)=>b.yuzde_toplam-a.yuzde_toplam),hamToplam,hisseToplam:100};
+  return {
+    owners:enrichedOwners.sort((a,b)=>b.yuzde_toplam-a.yuzde_toplam),
+    hamToplam,
+    hisseToplam:hamToplam,
+    normToplam:enrichedOwners.length?100:0,
+  };
 }
 function hydrateTapuRecord(record){
   const normalized=normalizeOwners(record.malikler||[],parseLocaleNumber(record&&record.yuzolcum_sayi));
-  return {...record,malikler:normalized.owners,malik_sayisi:normalized.owners.length,ham_hisse_toplam:+normalized.hamToplam.toFixed(5),hisse_toplam:normalized.owners.length?100:0};
+  return {
+    ...record,
+    malikler:normalized.owners,
+    malik_sayisi:normalized.owners.length,
+    ham_hisse_toplam:+normalized.hamToplam.toFixed(5),
+    hisse_toplam:+normalized.hisseToplam.toFixed(5),
+    norm_hisse_toplam:+(normalized.normToplam||0).toFixed(5),
+  };
 }
 function hydrateLoadedData(data){return data.map(hydrateTapuRecord);}
 function parseTapu(rawText,filename,fileMeta){
@@ -1125,28 +1140,30 @@ function openModal(idx){
     const cLbls=allOwners.map(m=>String((m.ad||'')).substring(0,26));
     const cData=allOwners.map(m=>+(m.yuzde_toplam||0).toFixed(4));
     const cColors=allOwners.map((_,i)=>PAL[i%PAL.length]);
+    const missingPct=Math.max(0,+(100-(d.hisse_toplam||0)).toFixed(4));
+    if(missingPct>0.0001){cLbls.push('Tespit Edilemeyen');cData.push(missingPct);cColors.push('#cbd5e1');}
     const rows=allOwners.map(m=>{
       const hs=m.hisseler
-        ?m.hisseler.map(h=>'<span style="font-family:monospace;font-size:.8em">'+esc(h.hisse)+'</span> <span style="color:var(--p2)">%'+Number(h.yuzde||0).toFixed(4)+'</span> <span style="color:var(--muted)">Ham: '+Number(h.m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2 | Norm: '+Number(h.norm_m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</span>').join('<br>')
+        ?m.hisseler.map(h=>'<span style="font-family:monospace;font-size:.8em">'+esc(h.hisse)+'</span> <span style="color:var(--p2)">Ham %'+Number(h.yuzde||0).toFixed(4)+'</span> <span style="color:var(--muted)">Ham: '+Number(h.m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2 | Norm %'+Number(h.norm_yuzde||0).toFixed(4)+' | Norm: '+Number(h.norm_m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</span>').join('<br>')
         :esc(m.hisse);
       return '<tr><td title="'+esc(m.ad)+'">'+esc(m.ad||'--')+'</td>'
         +'<td style="font-size:.72rem;line-height:1.6">'+hs+'<div style="margin-top:4px;color:var(--muted)">Ham Toplam: '+Number(m.m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2 | Norm Toplam: '+Number(m.norm_m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</div></td>'
-        +'<td><strong style="color:var(--p2)">%'+(m.yuzde_toplam||0).toFixed(4)+'</strong>'
+        +'<td><strong style="color:var(--p2)">Ham %'+(m.yuzde_toplam||0).toFixed(4)+'</strong><div style="font-size:.72rem;color:var(--muted)">Norm %'+(m.norm_yuzde_toplam||0).toFixed(4)+'</div>'
         +'<div class="pct-bar-mini"><div class="pct-bar-fill" style="width:'+Math.min(m.yuzde_toplam||0,100)+'%"></div></div></td></tr>';
     }).join('');
-    const covPct=Math.min(d.hisse_toplam,100);
+    const covPct=Math.min(d.hisse_toplam||0,100);
     const covClass='';
     ownHTML='<div class="own-wrap"><div><div class="own-chart-wrap"><canvas id="ownChart"></canvas></div></div>'
       +'<div><table class="own-table"><thead><tr><th>Malik Adi</th><th>Hisse &amp; m2</th><th>%</th></tr></thead>'
       +'<tbody>'+rows+'</tbody></table></div></div>';
     ownHTML+='<div class="own-summary">'
       +'<div class="os-item"><div class="k">Tespit edilen malik</div><div class="v">'+d.malik_sayisi+'</div></div>'
-      +'<div class="os-item"><div class="k">Normalize toplam pay</div><div class="v" style="color:var(--g)">%'+d.hisse_toplam.toFixed(4)+'</div></div>'
-      +'<div class="os-item"><div class="k">Ham tespit toplamı</div><div class="v">%'+(d.ham_hisse_toplam||0).toFixed(4)+'</div></div>'
-      +(d.malikler[0]?'<div class="os-item"><div class="k">En buyuk pay</div><div class="v">'+esc(d.malikler[0].ad)+' (%'+(d.malikler[0].yuzde_toplam||0).toFixed(4)+')</div></div>':'')
-      +(d.malikler[1]?'<div class="os-item"><div class="k">2. buyuk pay</div><div class="v">'+esc(d.malikler[1].ad)+' (%'+(d.malikler[1].yuzde_toplam||0).toFixed(4)+')</div></div>':'')
+      +'<div class="os-item"><div class="k">Tespit edilen toplam pay</div><div class="v" style="color:var(--g)">%'+(d.hisse_toplam||0).toFixed(4)+'</div></div>'
+      +'<div class="os-item"><div class="k">Normalize toplam pay</div><div class="v">%'+(d.norm_hisse_toplam||0).toFixed(4)+'</div></div>'
+      +(d.malikler[0]?'<div class="os-item"><div class="k">En buyuk ham pay</div><div class="v">'+esc(d.malikler[0].ad)+' (%'+(d.malikler[0].yuzde_toplam||0).toFixed(4)+')</div></div>':'')
+      +(d.malikler[1]?'<div class="os-item"><div class="k">2. buyuk ham pay</div><div class="v">'+esc(d.malikler[1].ad)+' (%'+(d.malikler[1].yuzde_toplam||0).toFixed(4)+')</div></div>':'')
       +'</div>'
-      +'<div style="margin-top:6px;font-size:.73rem;color:var(--muted)">Gosterilen paylar toplamda her zaman %100 olacak sekilde normalize edilir. Ham tespit: %'+(d.ham_hisse_toplam||0).toFixed(4)
+      +'<div style="margin-top:6px;font-size:.73rem;color:var(--muted)">Ham dağılım esas alınır. Normalize değerler sadece karşılaştırma içindir. Tespit edilen pay: %'+(d.hisse_toplam||0).toFixed(4)
       +'<div class="cov-bar"><div class="cov-fill'+covClass+'" style="width:'+covPct+'%"></div></div></div>';
     setTimeout(()=>{
       if(modalChart)try{modalChart.destroy();}catch(e){}

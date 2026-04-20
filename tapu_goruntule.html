@@ -490,10 +490,10 @@ function preProcess(text){
   const merged=[];
   for(let i=0;i<out.length;i++){
     let line=out[i];
-    if(/\(SN[G]?:\d{7,12}\)/.test(line)&&!/\d{1,12}\/\d{1,12}\s+[\d.]+\s+[\d.]+/.test(line)){
+    if(/\(SN[G]?:\d{7,12}\)/.test(line)&&!/\d{1,12}\/\d{1,12}\s+[\d.,]+\s+[\d.,]+/.test(line)){
       // Try to merge up to 2 continuation lines to capture split owner entries
       for(let tries=0;tries<2;tries++){
-        if(/\d{1,12}\/\d{1,12}\s+[\d.]+\s+[\d.]+/.test(line))break;
+        if(/\d{1,12}\/\d{1,12}\s+[\d.,]+\s+[\d.,]+/.test(line))break;
         let j=i+1;
         while(j<out.length&&/^[\u0041-\u024f]{1}$/.test(out[j]))j++;
         if(j<out.length&&!/\(SN[G]?:/.test(out[j])&&out[j].length<150){line=line+' '+out[j];i=j;}
@@ -506,6 +506,16 @@ function preProcess(text){
 }
 function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):''}
 function cl(s){return s?s.replace(/\s+/g,' ').trim():''}
+function parseLocaleNumber(v){
+  if(v===null||v===undefined)return 0;
+  let s=String(v).trim();
+  if(!s)return 0;
+  s=s.replace(/\s+/g,'');
+  if(s.includes(',')&&s.includes('.'))s=s.replace(/\./g,'').replace(',', '.');
+  else if(s.includes(','))s=s.replace(',', '.');
+  const n=Number(s);
+  return Number.isFinite(n)?n:0;
+}
 function rx(text){for(let i=1;i<arguments.length;i++){const m=text.match(arguments[i]);if(m)return cl(m[1]||'');}return '';}
 function normalizePercentValues(values,target){
   if(!values.length)return [];
@@ -522,31 +532,44 @@ function normalizePercentValues(values,target){
     return normalized;
   });
 }
-function normalizeOwners(owners){
+function normalizeOwners(owners,totalM2){
   if(!Array.isArray(owners)||!owners.length)return {owners:[],hamToplam:0,hisseToplam:0};
-  const rawOwnerTotals=owners.map(owner=>Number(owner.yuzde_toplam||owner.yuzde||0));
+  const safeTotalM2=parseLocaleNumber(totalM2);
+  const rawOwnerTotals=owners.map(owner=>{
+    if(owner&&owner.yuzde_toplam!==undefined)return parseLocaleNumber(owner.yuzde_toplam);
+    if(owner&&owner.yuzde!==undefined)return parseLocaleNumber(owner.yuzde);
+    if(Array.isArray(owner&&owner.hisseler))return owner.hisseler.reduce((sum,share)=>sum+parseLocaleNumber(share.yuzde),0);
+    return 0;
+  });
   const hamToplam=+rawOwnerTotals.reduce((sum,value)=>sum+value,0).toFixed(5);
   const normalizedOwnerTotals=normalizePercentValues(rawOwnerTotals,100);
   const normalizedOwners=owners.map((owner,index)=>{
-    const hisseler=Array.isArray(owner.hisseler)&&owner.hisseler.length?owner.hisseler:[{hisse:owner.hisse,yuzde:Number(owner.yuzde_toplam||owner.yuzde||0),m2:Number(owner.m2_toplam||owner.m2||0)}];
-    const rawShares=hisseler.map(share=>Number(share.yuzde||0));
+    const hisseler=Array.isArray(owner.hisseler)&&owner.hisseler.length
+      ?owner.hisseler
+      :[{hisse:owner.hisse,yuzde:parseLocaleNumber(owner.yuzde_toplam||owner.yuzde||0),m2:parseLocaleNumber(owner.m2_toplam||owner.m2||0)}];
+    const rawShares=hisseler.map(share=>parseLocaleNumber(share.yuzde||0));
     const normalizedShares=normalizePercentValues(rawShares,normalizedOwnerTotals[index]);
     const normalizedHisseler=hisseler.map((share,shareIndex)=>({
       ...share,
-      ham_yuzde:Number(share.yuzde||0),
+      ham_yuzde:parseLocaleNumber(share.yuzde||0),
+      ham_m2:parseLocaleNumber(share.m2||0),
       yuzde:normalizedShares[shareIndex],
+      m2:safeTotalM2>0?+((safeTotalM2*normalizedShares[shareIndex])/100).toFixed(4):parseLocaleNumber(share.m2||0),
     }));
+    const ownerM2=normalizedHisseler.reduce((sum,share)=>sum+parseLocaleNumber(share.m2),0);
     return {
       ...owner,
-      ham_yuzde_toplam:Number(owner.yuzde_toplam||owner.yuzde||0),
+      ham_yuzde_toplam:parseLocaleNumber(owner.yuzde_toplam||owner.yuzde||0),
+      ham_m2_toplam:parseLocaleNumber(owner.m2_toplam||owner.m2||0),
       yuzde_toplam:normalizedOwnerTotals[index],
+      m2_toplam:+ownerM2.toFixed(4),
       hisseler:normalizedHisseler,
     };
   });
   return {owners:normalizedOwners.sort((a,b)=>b.yuzde_toplam-a.yuzde_toplam),hamToplam,hisseToplam:100};
 }
 function hydrateTapuRecord(record){
-  const normalized=normalizeOwners(record.malikler||[]);
+  const normalized=normalizeOwners(record.malikler||[],parseLocaleNumber(record&&record.yuzolcum_sayi));
   return {...record,malikler:normalized.owners,malik_sayisi:normalized.owners.length,ham_hisse_toplam:+normalized.hamToplam.toFixed(5),hisse_toplam:normalized.owners.length?100:0};
 }
 function hydrateLoadedData(data){return data.map(hydrateTapuRecord);}
@@ -559,7 +582,7 @@ function parseTapu(rawText,filename,fileMeta){
   d.ada_parsel=rx(text,/Ada\/Parsel[:\s]+([^\n]{2,30})/i);
   if(!d.ada_parsel){const am=text.match(/Ada[:\s]+([\d]+)[\s\/]+Parsel[:\s]+([\d]+)/i);if(am)d.ada_parsel=am[1]+'/'+am[2];}
   const yzRaw=rx(text,/AT\s*Y[u\u00fc]z[o\u00f6]l[c\u00e7][u\u00fc]m\s*\(m2\)[:\s]*([\d.,]+)/i,/Y[u\u00fc]z[o\u00f6]l[c\u00e7][u\u00fc]m[:\s]*([\d.,]+)/i,/Alan[:\s]*([\d.,]+)\s*m/i);
-  d.yuzolcum=yzRaw;d.yuzolcum_sayi=parseFloat((yzRaw||'0').replace(',','.'))||0;
+  d.yuzolcum=yzRaw;d.yuzolcum_sayi=parseLocaleNumber(yzRaw||0);
   d.nitelik   =rx(text,/Ana\s*Ta[s\u015f][i\u0131]nmaz\s*Nitelik[:\s]+([^\n]{3,60})/i,/Nitelik[:\s]+([^\n]{3,60})/i);
   d.il_ilce   =rx(text,/[I\u0130]l\/[I\u0130]l[c\u00e7]e[:\s]+([^\n]{2,50})/i);
   d.kurum     =rx(text,/Kurum\s*Ad[i\u0131][:\s]+([^\n]{2,70})/i);
@@ -581,6 +604,7 @@ function parseTapu(rawText,filename,fileMeta){
 function parseOwners(text,totalM2){
   const entries=[],seen=new Set();
   const snRe=/\(SN[G]?:(\d{7,12})\)\s+([^\n\r:]{2,80}?)\s*:/g;
+  const safeTotalM2=parseLocaleNumber(totalM2);
   let m;
   while((m=snRe.exec(text))!==null){
     const sn=m[1];
@@ -589,24 +613,30 @@ function parseOwners(text,totalM2){
     if(name.length<2)continue;
     const fwdStart=m.index+m[0].length;
     const fwd=text.substring(fwdStart,fwdStart+700);
-    const fm=fwd.match(/(\d{1,12})\/(\d{1,12})\s+([\d]+\.?[\d]*)\s+([\d]+\.?[\d]*)/);
+    const fm=fwd.match(/(\d{1,12})\/(\d{1,12})\s+([\d.,]+)\s+([\d.,]+)/);
     if(!fm)continue;
     const pay=parseInt(fm[1],10),payda=parseInt(fm[2],10);
-    const m2v=parseFloat(fm[3]),tot=parseFloat(fm[4])||totalM2||1;
+    const m2Parsed=parseLocaleNumber(fm[3]);
+    const totParsed=parseLocaleNumber(fm[4]);
+    const tot=safeTotalM2>0?safeTotalM2:(totParsed||1);
     if(payda===0||pay===0)continue;
     if(pay>payda)continue;
     if(tot<10)continue;
-    if(m2v>tot*1.01)continue;
+    const pctFromHisse=(pay/payda)*100;
+    const m2FromHisse=tot*(pay/payda);
+    let m2v=m2Parsed>0?m2Parsed:m2FromHisse;
     if(m2v<=0)continue;
+    if(m2v>tot*1.01)m2v=m2FromHisse;
+    if(Math.abs(m2v-m2FromHisse)>Math.max(0.5,tot*0.01))m2v=m2FromHisse;
     const key=sn+'|'+fm[1]+'/'+fm[2];
     if(seen.has(key))continue;seen.add(key);
-    const yuzde=tot>0?(m2v/tot*100):(pay/payda*100);
-    entries.push({sn,ad:name,hisse:fm[1]+'/'+fm[2],m2:m2v,tot,yuzde:+yuzde.toFixed(5)});
+    const yuzde=tot>0?(m2v/tot*100):pctFromHisse;
+    entries.push({sn,ad:name,hisse:fm[1]+'/'+fm[2],m2:+m2v.toFixed(4),tot,yuzde:+yuzde.toFixed(5),pay,payda});
   }
   const bySN={};
   for(const o of entries){
-    if(!bySN[o.sn])bySN[o.sn]={...o,yuzde_toplam:o.yuzde,hisseler:[{hisse:o.hisse,yuzde:o.yuzde,m2:o.m2}]};
-    else{bySN[o.sn].yuzde_toplam=+(bySN[o.sn].yuzde_toplam+o.yuzde).toFixed(5);bySN[o.sn].hisseler.push({hisse:o.hisse,yuzde:o.yuzde,m2:o.m2});}
+    if(!bySN[o.sn])bySN[o.sn]={...o,yuzde_toplam:o.yuzde,m2_toplam:o.m2,hisseler:[{hisse:o.hisse,yuzde:o.yuzde,m2:o.m2,pay:o.pay,payda:o.payda}]};
+    else{bySN[o.sn].yuzde_toplam=+(bySN[o.sn].yuzde_toplam+o.yuzde).toFixed(5);bySN[o.sn].m2_toplam=+((bySN[o.sn].m2_toplam||0)+o.m2).toFixed(4);bySN[o.sn].hisseler.push({hisse:o.hisse,yuzde:o.yuzde,m2:o.m2,pay:o.pay,payda:o.payda});}
   }
   return Object.values(bySN).sort((a,b)=>b.yuzde_toplam-a.yuzde_toplam);
 }
@@ -1037,7 +1067,7 @@ function openModal(idx){
         ?m.hisseler.map(h=>'<span style="font-family:monospace;font-size:.8em">'+esc(h.hisse)+'</span> <span style="color:var(--p2)">%'+Number(h.yuzde||0).toFixed(4)+'</span> <span style="color:var(--muted)">'+Number(h.m2||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</span>').join('<br>')
         :esc(m.hisse);
       return '<tr><td title="'+esc(m.ad)+'">'+esc(m.ad||'--')+'</td>'
-        +'<td style="font-size:.72rem;line-height:1.6">'+hs+'</td>'
+        +'<td style="font-size:.72rem;line-height:1.6">'+hs+'<div style="margin-top:4px;color:var(--muted)">Toplam: '+Number(m.m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2 | Ham: '+Number(m.ham_m2_toplam||0).toLocaleString('tr-TR',{maximumFractionDigits:2})+' m2</div></td>'
         +'<td><strong style="color:var(--p2)">%'+(m.yuzde_toplam||0).toFixed(4)+'</strong>'
         +'<div class="pct-bar-mini"><div class="pct-bar-fill" style="width:'+Math.min(m.yuzde_toplam||0,100)+'%"></div></div></td></tr>';
     }).join('');
